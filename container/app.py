@@ -40,6 +40,10 @@ LOCK = threading.Lock()
 POLL_INTERVAL_SECONDS = 15
 TERMINAL_STATES = ["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"]
 current_block = None
+
+# ---- commands to give to instance ---------------------------------------------------------------
+
+
 class BlockCommand(BaseModel):
     def to_list(self) -> list[str]:
         """
@@ -65,6 +69,46 @@ class SyncS3BucketCommand(BlockCommand):
 
 class TestLongBlockCommand(BlockCommand):
     pass
+
+class LeRobotConversionCommand(BlockCommand):
+    sys0: str = "python3"
+    sys1: str = "convert.py"
+    source_bucket: str
+    destination_bucket: str
+
+class HandRemovalCommand(BlockCommand):
+    sys0: str = "python3"
+    sys1: str = "remove_hands.py"
+    source_bucket: str
+    destination_bucket: str
+
+class IsaacFinetuneCommand(BlockCommand): # container has no custom code
+    sys0: str = "aws"
+    sys1: str = "s3"
+    sys2: str = "sync"
+    source_bucket: str
+    destination: str = "." # =
+    delimiter: str = "\\"
+    sys0: str = "python3"
+    sys1: str = "finetune.py"
+    source: str = "." # =
+    output: str = "."
+    steps: int = 20000
+    dryrun: bool = False
+
+# ---- batch job block requests ---------------------------------------------------------------
+
+class TestLocalBlockRequest(BaseModel):
+    name: Literal["test_local_block"]
+
+class GetModalityRequest(BaseModel):
+    name: Literal["get_modality"]
+    robot_type: str
+
+class CompositeVideosRequest(BaseModel):
+    name: Literal["composite_videos"]
+    video: str 
+    overlay: str
 
 class TestBlockRequest(BaseModel):
     name: Literal["test_block"]
@@ -94,8 +138,29 @@ class SyncS3BucketRequest(BaseModel):
     environment: List[dict] = Field(default_factory=list)
     command: SyncS3BucketCommand = Field(default_factory=SyncS3BucketCommand)
 
+class HandRemovalRequest(BaseModel):
+    name: Literal["hand_removal"]
+    job_queue: str = "job-queue-test"
+    job_definition: str = "run_block_job"
+    environment: List[dict] = Field(default_factory=list)
+    command: HandRemovalCommand = Field(default_factory=HandRemovalCommand)
+
+class LeRobotConversionRequest(BaseModel):
+    name: Literal["lerobot_conversion"]
+    job_queue: str = "job-queue-test"
+    job_definition: str = "run_block_job"
+    environment: List[dict] = Field(default_factory=list)
+    command: LeRobotConversionCommand = Field(default_factory=LeRobotConversionCommand)
+
+class IsaacFinetuneRequest(BaseModel):
+    name: Literal["finetune_groot"]
+    job_queue: str = "job-queue-test"
+    job_definition: str = "run_block_job"
+    environment: List[dict] = Field(default_factory=list)
+    command: IsaacFinetuneCommand = Field(default_factory=IsaacFinetuneCommand)
+
 BlockRequest = Annotated[
-    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest],
+    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotConversionRequest, IsaacFinetuneRequest],
     Field(discriminator="name"),
 ]
 
@@ -156,7 +221,6 @@ def start_workflow(req: WorkflowRequest):
 def health():
     return {"status": "ok"}
 
-
 @app.get("/workflows/{workflow_id}")
 def get_current_block(workflow_id: str):
     global current_block
@@ -164,7 +228,6 @@ def get_current_block(workflow_id: str):
     if current_block is None:
         raise HTTPException(404, "workflow not running")
     return current_block
-
 
 # ---- engine internals ---------------------------------------------------
 
@@ -189,22 +252,32 @@ def _run_workflow(workflow_id: str, blocks: list[BlockRequest]):
 def _block_handler(block: BlockRequest) -> str:
     if block.name == "test_block":
         job_id = _submit_batch_job(block)
-        logger.info(f"Submitted test_block job {job_id}")
         return _poll_until_done(job_id, mock_time=1)
+    elif block.name == "test_local_block":
+        return _local_block(block)
+    elif block.name == "get_modality":
+        return _local_block(block)
     elif block.name == "test_long_block":
         job_id = _submit_batch_job(block)
-        logger.info(f"Submitted test_long_block job {job_id}")
         return _poll_until_done(job_id, mock_time=60)
     elif block.name == "sync_s3_bucket":
         job_id = _submit_batch_job(block)
-        logger.info(f"Submitted sync_s3_bucket job {job_id}")
+        return _poll_until_done(job_id)
+    elif block.name == "lerobot_conversion":
+        job_id = _submit_batch_job(block)
+        return _poll_until_done(job_id)
+    elif block.name == "hand_removal":
+        job_id = _submit_batch_job(block)
+        return _poll_until_done(job_id)
+    elif block.name == "finetune_groot":
+        job_id = _submit_batch_job(block)
         return _poll_until_done(job_id)
     else:
         logger.error(f"Unknown block type: {block.name}")
-        return None
+        return "FAILED"
 
 def _submit_batch_job(block: BlockRequest) -> str:
-    logger.info(f"{block.model_dump()}")
+    logger.info(f"Submitting {block.name}:\n{block.model_dump()}")
     if not batch:
         time.sleep(1)
         return "0"
@@ -218,9 +291,25 @@ def _submit_batch_job(block: BlockRequest) -> str:
             "environment": block.environment
         }
     )
-
+    logger.info(f"Submitted {block.name} with {response["jobId"]}")
     return response["jobId"]
 
+def _local_block(block: BlockRequest):
+    logger.info(f"Running local job for {block.name}:\n{block.model_dump()}")
+    return _submit_local_job(block)
+
+def _submit_local_job(block):
+    import local_jobs # don't import globally, no need.
+
+    if block.name == "test_local_block":
+        return "SUCCEEDED"
+    elif block.name == "get_modality":
+        local_jobs.get_modality(block.robot_type)
+    elif block.name == "composite_videos":
+        local_jobs.composite_videos(block.video, block.overlay)
+    else:
+        logger.error(f"Local block {block.name} not supported.")
+        return "FAILED"
 
 def _poll_until_done(job_id: str, mock_time: float = 1.0) -> str:
     if not batch:
