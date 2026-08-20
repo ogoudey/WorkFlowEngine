@@ -3,12 +3,14 @@ Workflow engine — runs inside the Fargate task.
 
 Push me to ECR, then run the task in Fargate. The task will start a FastAPI server that listens for workflow requests. Each workflow is a list of blocks, which are executed in order. Each block is a Batch job, and the engine polls for the job status until it reaches a terminal state.
 
+(login aws ecr get-login-password --region us-east-2 | sudo docker login --username AWS --password-stdin 538091937392.dkr.ecr.us-east-2.amazonaws.com)
+
 docker build -t batch-submitter . --no-cache
 docker tag batch-submitter:latest 538091937392.dkr.ecr.us-east-2.amazonaws.com/batch-submitter:latest
 docker push 538091937392.dkr.ecr.us-east-2.amazonaws.com/batch-submitter:latest
 """
 import time
-from typing import Annotated, Literal, Union, reveal_type, Optional
+from typing import Annotated, Literal, Union, reveal_type, Optional, List
 import uuid
 import threading
 from datetime import datetime, timezone
@@ -38,42 +40,62 @@ LOCK = threading.Lock()
 POLL_INTERVAL_SECONDS = 15
 TERMINAL_STATES = ["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"]
 current_block = None
-class BlockArgs(BaseModel):
-    def to_container_overrides(self) -> dict:
+class BlockCommand(BaseModel):
+    def to_list(self) -> list[str]:
         """
-        Default: dump all fields as Batch environment variables.
-        Override this per-subclass if a block needs `command` args
-        or `resourceRequirements` instead.
+        Convert the instance variables to a list of arguments for the Batch job command. The order of the arguments is determined by the order of the fields in the model.
         """
-        env = [
-            {"name": k.upper(), "value": str(v)}
-            for k, v in self.model_dump().items()
-        ]
-        overrides: dict = {}
-        if env:
-            overrides["environment"] = env
-        return overrides
+        return [str(v) for v in self.model_dump().values()]
 
-class TestBlockArgs(BlockArgs):
-    test_arg: str = "default"
+class TestBlockCommand(BlockCommand):
+    sys0: str = "echo"
+    sys1: str = "hello world"
 
-class TestLongBlockArgs(BlockArgs):
+class TestAWSCommand(BlockCommand):
+    sys0: str = "aws"
+    sys1: str = "s3"
+    sys2: str = "ls"
+
+class SyncS3BucketCommand(BlockCommand):
+    sys0: str = "aws"
+    sys1: str = "s3"
+    sys2: str = "sync"
+    source_bucket: str
+    destination: str = "."
+
+class TestLongBlockCommand(BlockCommand):
     pass
 
 class TestBlockRequest(BaseModel):
     name: Literal["test_block"]
     job_queue: str = "job-queue-test"
     job_definition: str = "run_block_job"
-    args: TestBlockArgs = Field(default_factory=TestBlockArgs)
+    environment: List[dict] = Field(default_factory=list)
+    command: TestBlockCommand = Field(default_factory=TestBlockCommand)
+
+class TestAWSRequest(BaseModel):
+    name: Literal["test_aws_block"]
+    job_queue: str = "job-queue-test"
+    job_definition: str = "run_block_job"
+    environment: List[dict] = Field(default_factory=list)
+    command: TestAWSCommand = Field(default_factory=TestAWSCommand)
 
 class TestLongBlockRequest(BaseModel):
     name: Literal["test_long_block"]
     job_queue: str = "job-queue-test"
     job_definition: str = "run_block_job"
-    args: TestLongBlockArgs = Field(default_factory=TestLongBlockArgs)
+    environment: List[dict] = Field(default_factory=list)
+    command: TestLongBlockCommand = Field(default_factory=TestLongBlockCommand)
+
+class SyncS3BucketRequest(BaseModel):
+    name: Literal["sync_s3_bucket"]
+    job_queue: str = "job-queue-test"
+    job_definition: str = "run_block_job"
+    environment: List[dict] = Field(default_factory=list)
+    command: SyncS3BucketCommand = Field(default_factory=SyncS3BucketCommand)
 
 BlockRequest = Annotated[
-    Union[TestBlockRequest, TestLongBlockRequest],
+    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest],
     Field(discriminator="name"),
 ]
 
@@ -96,9 +118,8 @@ def main_start_workflow() -> Optional[threading.Thread]:
         
         logger.info(f"Successfully loaded workflow: {workflow.workflow_id}")
         for block in workflow.blocks:
-            logger.info(f" - Found block: {block.name}")
-            if block.name == "test_block":
-                logger.info(f"   Arg value: {block.args.test_arg}")
+            logger.info(f" - Found block: {block}")
+
                 
     except ValidationError as e:
         # Catches JSON syntax errors AND validation mismatches (e.g., bad discriminator name)
@@ -167,13 +188,17 @@ def _run_workflow(workflow_id: str, blocks: list[BlockRequest]):
 
 def _block_handler(block: BlockRequest) -> str:
     if block.name == "test_block":
-        job_id = _submit_batch_job( block)
+        job_id = _submit_batch_job(block)
         logger.info(f"Submitted test_block job {job_id}")
         return _poll_until_done(job_id, mock_time=1)
     elif block.name == "test_long_block":
         job_id = _submit_batch_job(block)
         logger.info(f"Submitted test_long_block job {job_id}")
         return _poll_until_done(job_id, mock_time=60)
+    elif block.name == "sync_s3_bucket":
+        job_id = _submit_batch_job(block)
+        logger.info(f"Submitted sync_s3_bucket job {job_id}")
+        return _poll_until_done(job_id)
     else:
         logger.error(f"Unknown block type: {block.name}")
         return None
@@ -188,7 +213,10 @@ def _submit_batch_job(block: BlockRequest) -> str:
         jobName=f"{block.name}",
         jobQueue=f"{block.job_queue}",
         jobDefinition=f"{block.job_definition}",
-        containerOverrides=block.args.to_container_overrides(),
+        containerOverrides={
+            "command": block.command.to_list(),
+            "environment": block.environment
+        }
     )
 
     return response["jobId"]
