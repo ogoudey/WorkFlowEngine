@@ -21,6 +21,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 import logging
 import uvicorn
+import dataclasses
+import shlex
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,50 @@ class BlockCommand(BaseModel):
         """
         return [str(v) for v in self.model_dump().values()]
 
+    def to_sh(self) -> List[str]:
+            # Collect instance attributes (supports dataclasses or standard classes)
+            if dataclasses.is_dataclass(self):
+                values = {
+                    f.name: getattr(self, f.name) for f in dataclasses.fields(self)
+                }
+            else:
+                values = {
+                    k: v
+                    for k, v in vars(self).items()
+                    if not k.startswith("_") and k != "commands"
+                }
+    
+            formatted_sequences = []
+    
+            for sequence in self.commands:
+                cmd_args = []
+                for arg in sequence:
+                    # Handle placeholders like '{source_bucket}'
+                    if arg.startswith("{") and arg.endswith("}"):
+                        var_name = arg[1:-1]
+                        val = values.get(var_name)
+    
+                        # Boolean flag handling: include '--flag' if True, drop if False
+                        if isinstance(val, bool):
+                            if val:
+                                cmd_args.append(f"--{var_name}")
+                            continue
+    
+                        if val is not None:
+                            cmd_args.append(str(val))
+                    else:
+                        cmd_args.append(arg)
+    
+                # Shell-quote every argument to handle spaces and special characters safely
+                quoted_cmd = " ".join(shlex.quote(a) for a in cmd_args)
+                formatted_sequences.append(quoted_cmd)
+    
+            # Join the command sequences with '&&' for fail-fast execution
+            full_command = " && ".join(formatted_sequences)
+    
+            # Return format expected by AWS EC2 / ECS container overrides command parameter
+            return ["sh", "-c", full_command]   
+
 class TestBlockCommand(BlockCommand):
     sys0: str = "echo"
     sys1: str = "hello world"
@@ -65,10 +111,32 @@ class SyncS3BucketCommand(BlockCommand):
     sys1: str = "s3"
     sys2: str = "sync"
     source_bucket: str
-    destination: str = "."
+    destination: str = "tmp/data"
 
 class TestLongBlockCommand(BlockCommand):
-    pass
+    commands: List[List[str]] = [
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{source_bucket}",
+            "{tmp_destination}",
+        ],
+        [
+            "echo",
+            "Hello, World!"
+        ],
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{tmp_destination}",
+            "{destination}",
+        ],
+    ]
+    source_bucket: str
+    tmp_destination: str = "tmp/data"
+    destination: str
 
 class LeRobotConversionCommand(BlockCommand):
     sys0: str = "python3"
@@ -82,19 +150,37 @@ class HandRemovalCommand(BlockCommand):
     source_bucket: str
     destination_bucket: str
 
-class IsaacFinetuneCommand(BlockCommand): # container has no custom code
-    sys0: str = "aws"
-    sys1: str = "s3"
-    sys2: str = "sync"
-    source_bucket: str
-    destination: str = "." # =
-    delimiter: str = "\\"
-    sys0: str = "python3"
-    sys1: str = "finetune.py"
-    source: str = "." # =
-    output: str = "."
+class IsaacFinetuneCommand(BlockCommand):
+    # Separate commands into distinct lists or tuples
+    commands: List[List[str]] = [
+        [
+            "aws",
+            "s3",
+            "sync",
+            "--source_bucket",
+            "{source_bucket}",
+            "--destination",
+            "{destination}",
+        ],
+        [
+            "python3",
+            "finetune.py",
+            "--source",
+            "{source}",
+            "--output",
+            "{output}",
+            "--steps",
+            "{steps}",
+        ],
+    ]
+
+    source_bucket: str = "my-bucket"
+    destination: str = "tmp/data"
+    output: str = "tmp/output"
     steps: int = 20000
     dryrun: bool = False
+
+    
 
 # ---- batch job block requests ---------------------------------------------------------------
 
@@ -113,28 +199,28 @@ class CompositeVideosRequest(BaseModel):
 class TestBlockRequest(BaseModel):
     name: Literal["test_block"]
     job_queue: str = "job-queue-test"
-    job_definition: str = "run_block_job"
+    job_definition: str = "TestBlockCommand"
     environment: List[dict] = Field(default_factory=list)
     command: TestBlockCommand = Field(default_factory=TestBlockCommand)
 
 class TestAWSRequest(BaseModel):
     name: Literal["test_aws_block"]
     job_queue: str = "job-queue-test"
-    job_definition: str = "run_block_job"
+    job_definition: str = "TestAWSCommand"
     environment: List[dict] = Field(default_factory=list)
     command: TestAWSCommand = Field(default_factory=TestAWSCommand)
 
 class TestLongBlockRequest(BaseModel):
     name: Literal["test_long_block"]
     job_queue: str = "job-queue-test"
-    job_definition: str = "run_block_job"
+    job_definition: str = "TestLongBlockCommand"
     environment: List[dict] = Field(default_factory=list)
     command: TestLongBlockCommand = Field(default_factory=TestLongBlockCommand)
 
 class SyncS3BucketRequest(BaseModel):
     name: Literal["sync_s3_bucket"]
     job_queue: str = "job-queue-test"
-    job_definition: str = "run_block_job"
+    job_definition: str = "SyncS3BucketCommand"
     environment: List[dict] = Field(default_factory=list)
     command: SyncS3BucketCommand = Field(default_factory=SyncS3BucketCommand)
 
@@ -182,6 +268,7 @@ def main_start_workflow() -> Optional[threading.Thread]:
         workflow = WorkflowRequest.model_validate_json(raw_env_json)
         
         logger.info(f"Successfully loaded workflow: {workflow.workflow_id}")
+        logger.info(f"Workflow has {len(workflow.blocks)} blocks:")
         for block in workflow.blocks:
             logger.info(f" - Found block: {block}")
 
@@ -277,7 +364,10 @@ def _block_handler(block: BlockRequest) -> str:
         return "FAILED"
 
 def _submit_batch_job(block: BlockRequest) -> str:
-    logger.info(f"Submitting {block.name}:\n{block.model_dump()}")
+    logger.info(f"Submitting {block.name}")
+    logger.info(f"More info: {block}")
+    logger.info(f"More info: {block.model_dump()}")
+    logger.info(f"Block Request args: {block} \n        {{\n            \"command\": {block.command.to_sh() if hasattr(block.command, "commands") else block.command.to_list()},\n            \"environment\": {block.environment}\n        }}")
     if not batch:
         time.sleep(1)
         return "0"
@@ -287,7 +377,7 @@ def _submit_batch_job(block: BlockRequest) -> str:
         jobQueue=f"{block.job_queue}",
         jobDefinition=f"{block.job_definition}",
         containerOverrides={
-            "command": block.command.to_list(),
+            "command": block.command.to_sh() if hasattr(block.command, "commands") else block.command.to_list(),
             "environment": block.environment
         }
     )
