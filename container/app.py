@@ -173,6 +173,9 @@ class LeRobotConversionCommand(BlockCommand):
 class SyncTo30Command(BlockCommand):
     commands: List[List[str]] = [
         [
+            "ls"
+        ],
+        [
             "aws",
             "s3",
             "sync",
@@ -316,14 +319,14 @@ class LeRobotConversionRequest(BaseModel):
 
 class SyncTo30Request(BaseModel):
     name: Literal["sync_to_30"]
-    job_queue: str = "medium_queue"
+    job_queue: str = "small_queue"
     job_definition: str = "SyncTo30Command"
     environment: List[dict] = Field(default_factory=list)
     command: SyncTo30Command = Field(default_factory=SyncTo30Command)
 
 class CompositeVideosRequest(BaseModel):
     name: Literal["composite_videos"]
-    job_queue: str = "medium_queue"
+    job_queue: str = "small_queue"
     job_definition: str = "CompositeVideosCommand"
     environment: List[dict] = Field(default_factory=list)
     command: CompositeVideosCommand = Field(default_factory=CompositeVideosCommand)
