@@ -139,10 +139,36 @@ class TestLongBlockCommand(BlockCommand):
     destination: str
 
 class LeRobotConversionCommand(BlockCommand):
-    sys0: str = "python3"
-    sys1: str = "convert.py"
+    commands: List[List[str]] = [
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{source_bucket}",
+            "{tmp_source}",
+        ],
+        [
+            "python3",
+            "main.py",
+            "{tmp_source}",
+            "{tmp_destination}",
+            "{in_expectation}",
+            "{out_format}"
+        ],
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{tmp_destination}",
+            "{destination}",
+        ],
+    ]
     source_bucket: str
-    destination_bucket: str
+    destination: str
+    in_expectation: str
+    out_format: str
+    tmp_source: str = "tmp/input_dataset"
+    tmp_destination: str = "tmp/output_dataset"
 
 class HandRemovalCommand(BlockCommand):
     sys0: str = "python3"
@@ -151,7 +177,6 @@ class HandRemovalCommand(BlockCommand):
     destination_bucket: str
 
 class IsaacFinetuneCommand(BlockCommand):
-    # Separate commands into distinct lists or tuples
     commands: List[List[str]] = [
         [
             "aws",
@@ -198,49 +223,49 @@ class CompositeVideosRequest(BaseModel):
 
 class TestBlockRequest(BaseModel):
     name: Literal["test_block"]
-    job_queue: str = "job-queue-test"
+    job_queue: str = "minimal_queue"
     job_definition: str = "TestBlockCommand"
     environment: List[dict] = Field(default_factory=list)
     command: TestBlockCommand = Field(default_factory=TestBlockCommand)
 
 class TestAWSRequest(BaseModel):
     name: Literal["test_aws_block"]
-    job_queue: str = "job-queue-test"
+    job_queue: str = "minimal_queue"
     job_definition: str = "TestAWSCommand"
     environment: List[dict] = Field(default_factory=list)
     command: TestAWSCommand = Field(default_factory=TestAWSCommand)
 
 class TestLongBlockRequest(BaseModel):
     name: Literal["test_long_block"]
-    job_queue: str = "job-queue-test"
+    job_queue: str = "minimal_queue"
     job_definition: str = "TestLongBlockCommand"
     environment: List[dict] = Field(default_factory=list)
     command: TestLongBlockCommand = Field(default_factory=TestLongBlockCommand)
 
 class SyncS3BucketRequest(BaseModel):
     name: Literal["sync_s3_bucket"]
-    job_queue: str = "job-queue-test"
+    job_queue: str = "minimal_queue"
     job_definition: str = "SyncS3BucketCommand"
     environment: List[dict] = Field(default_factory=list)
     command: SyncS3BucketCommand = Field(default_factory=SyncS3BucketCommand)
 
 class HandRemovalRequest(BaseModel):
     name: Literal["hand_removal"]
-    job_queue: str = "job-queue-test"
+    job_queue: str = "minimal_queue"
     job_definition: str = "run_block_job"
     environment: List[dict] = Field(default_factory=list)
     command: HandRemovalCommand = Field(default_factory=HandRemovalCommand)
 
 class LeRobotConversionRequest(BaseModel):
     name: Literal["lerobot_conversion"]
-    job_queue: str = "job-queue-test"
-    job_definition: str = "run_block_job"
+    job_queue: str = "medium_queue"
+    job_definition: str = "LeRobotConversionCommand"
     environment: List[dict] = Field(default_factory=list)
     command: LeRobotConversionCommand = Field(default_factory=LeRobotConversionCommand)
 
 class IsaacFinetuneRequest(BaseModel):
     name: Literal["finetune_groot"]
-    job_queue: str = "job-queue-test"
+    job_queue: str = "minimal_queue"
     job_definition: str = "run_block_job"
     environment: List[dict] = Field(default_factory=list)
     command: IsaacFinetuneCommand = Field(default_factory=IsaacFinetuneCommand)
