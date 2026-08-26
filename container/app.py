@@ -443,6 +443,12 @@ def _block_handler(block: BlockRequest) -> str:
     elif block.name == "lerobot_conversion":
         job_id = _submit_batch_job(block)
         return _poll_until_done(job_id)
+    elif block.name == "sync_to_30":
+        job_id = _submit_batch_job(block)
+        return _poll_until_done(job_id)
+    elif block.name == "composite_videos":
+        job_id = _submit_batch_job(block)
+        return _poll_until_done(job_id)
     elif block.name == "hand_removal":
         job_id = _submit_batch_job(block)
         return _poll_until_done(job_id)
