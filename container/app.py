@@ -170,6 +170,62 @@ class LeRobotConversionCommand(BlockCommand):
     tmp_source: str = "tmp/input_dataset"
     tmp_destination: str = "tmp/output_dataset"
 
+class SyncTo30Command(BlockCommand):
+    commands: List[List[str]] = [
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{source_bucket}",
+            "{tmp_source}",
+        ],
+        [
+            "python3",
+            "sync_to_30.py",
+            "{tmp_source}",
+            "{delete_originals}"
+        ],
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{tmp_source}",
+            "{destination}",
+        ],
+    ]
+    source_bucket: str
+    destination: str
+    delete_originals: bool = True
+    tmp_source: str = "tmp/input_dataset"
+
+class CompositeVideosCommand(BlockCommand):
+    commands: List[List[str]] = [
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{source_bucket}",
+            "{tmp_source}",
+        ],
+        [
+            "python3",
+            "composite.py",
+            "{tmp_source}",
+            "{delete_originals}"
+        ],
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{tmp_source}",
+            "{destination}",
+        ],
+    ]
+    source_bucket: str
+    destination: str
+    delete_originals: bool = True
+    tmp_source: str = "tmp/input_dataset"
+
 class HandRemovalCommand(BlockCommand):
     sys0: str = "python3"
     sys1: str = "remove_hands.py"
@@ -216,11 +272,6 @@ class GetModalityRequest(BaseModel):
     name: Literal["get_modality"]
     robot_type: str
 
-class CompositeVideosRequest(BaseModel):
-    name: Literal["composite_videos"]
-    video: str 
-    overlay: str
-
 class TestBlockRequest(BaseModel):
     name: Literal["test_block"]
     job_queue: str = "minimal_queue"
@@ -263,6 +314,20 @@ class LeRobotConversionRequest(BaseModel):
     environment: List[dict] = Field(default_factory=list)
     command: LeRobotConversionCommand = Field(default_factory=LeRobotConversionCommand)
 
+class SyncTo30Request(BaseModel):
+    name: Literal["sync_to_30"]
+    job_queue: str = "medium_queue"
+    job_definition: str = "SyncTo30Command"
+    environment: List[dict] = Field(default_factory=list)
+    command: SyncTo30Command = Field(default_factory=SyncTo30Command)
+
+class CompositeVideosRequest(BaseModel):
+    name: Literal["composite_videos"]
+    job_queue: str = "medium_queue"
+    job_definition: str = "CompositeVideosCommand"
+    environment: List[dict] = Field(default_factory=list)
+    command: CompositeVideosCommand = Field(default_factory=CompositeVideosCommand)
+
 class IsaacFinetuneRequest(BaseModel):
     name: Literal["finetune_groot"]
     job_queue: str = "minimal_queue"
@@ -271,7 +336,7 @@ class IsaacFinetuneRequest(BaseModel):
     command: IsaacFinetuneCommand = Field(default_factory=IsaacFinetuneCommand)
 
 BlockRequest = Annotated[
-    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotConversionRequest, IsaacFinetuneRequest],
+    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotConversionRequest, IsaacFinetuneRequest, SyncTo30Request, CompositeVideosRequest],
     Field(discriminator="name"),
 ]
 
