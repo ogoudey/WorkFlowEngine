@@ -468,7 +468,7 @@ def _block_handler(block: BlockRequest) -> str:
         return _poll_until_done(job_id)
     elif block.name == "lerobot_adapter":
         print(f"This block forks containers {block.command}.")
-        block.job_definition = "LeRobotV2ConversionCommand" if "v21" in block.command.out_format else "LeRobotV3ConversionCommand"     
+        block.job_definition = "LeRobotV2ConversionJob" if "v21" in block.command.out_format else "LeRobotV3ConversionJob"     
         job_id = _submit_batch_job(block)
         return _poll_until_done(job_id)
     elif block.name == "sync_to_30":
