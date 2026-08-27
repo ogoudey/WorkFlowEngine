@@ -10,7 +10,7 @@ docker tag batch-submitter:latest 538091937392.dkr.ecr.us-east-2.amazonaws.com/b
 docker push 538091937392.dkr.ecr.us-east-2.amazonaws.com/batch-submitter:latest
 """
 import time
-from typing import Annotated, Literal, Union, reveal_type, Optional, List
+from typing import Annotated, Literal, Union, reveal_type, Optional, List, Any
 import uuid
 import threading
 from datetime import datetime, timezone
@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="workflow-engine")
-
+dry_run = False
 try:
     batch = boto3.client("batch", os.environ.get("AWS_DEFAULT_REGION", "us-east-2"))
 except Exception as e:
@@ -54,48 +54,71 @@ class BlockCommand(BaseModel):
         return [str(v) for v in self.model_dump().values()]
 
     def to_sh(self) -> List[str]:
-            # Collect instance attributes (supports dataclasses or standard classes)
-            if dataclasses.is_dataclass(self):
-                values = {
-                    f.name: getattr(self, f.name) for f in dataclasses.fields(self)
-                }
-            else:
-                values = {
-                    k: v
-                    for k, v in vars(self).items()
-                    if not k.startswith("_") and k != "commands"
-                }
-    
-            formatted_sequences = []
-    
-            for sequence in self.commands:
-                cmd_args = []
-                for arg in sequence:
-                    # Handle placeholders like '{source_bucket}'
-                    if arg.startswith("{") and arg.endswith("}"):
-                        var_name = arg[1:-1]
-                        val = values.get(var_name)
-    
-                        # Boolean flag handling: include '--flag' if True, drop if False
-                        if isinstance(val, bool):
-                            if val:
-                                cmd_args.append(f"--{var_name}")
-                            continue
-    
-                        if val is not None:
-                            cmd_args.append(str(val))
+        if dataclasses.is_dataclass(self):
+            values = {
+                f.name: getattr(self, f.name) for f in dataclasses.fields(self)
+            }
+        else:
+            values = {
+                k: v
+                for k, v in vars(self).items()
+                if not k.startswith("_") and k != "commands"
+            }
+
+        formatted_sequences = []
+
+        for sequence in self.commands:
+            cmd_args = []
+            i = 0
+            while i < len(sequence):
+                token = sequence[i]
+
+                # Check if this token is a flag paired with a placeholder (e.g., ["--delete_originals", "{delete_originals}"])
+                if (
+                    token.startswith("--")
+                    and i + 1 < len(sequence)
+                    and sequence[i + 1].startswith("{")
+                ):
+                    var_name = sequence[i + 1][1:-1]
+                    val = values.get(var_name)
+
+                    if isinstance(val, bool):
+                        if val:
+                            cmd_args.append(
+                                token
+                            )  # Append flag only if True (omit value)
+                        i += 2
+                        continue
+                    elif val is not None:
+                        cmd_args.extend([token, str(val)])  # Append flag + value
+                        i += 2
+                        continue
                     else:
-                        cmd_args.append(arg)
-    
-                # Shell-quote every argument to handle spaces and special characters safely
-                quoted_cmd = " ".join(shlex.quote(a) for a in cmd_args)
-                formatted_sequences.append(quoted_cmd)
-    
-            # Join the command sequences with '&&' for fail-fast execution
-            full_command = " && ".join(formatted_sequences)
-    
-            # Return format expected by AWS EC2 / ECS container overrides command parameter
-            return ["sh", "-c", full_command]   
+                        i += 2  # Skip both if None
+                        continue
+
+                # Standalone placeholder handling (e.g. positional arg "{tmp_source}")
+                if token.startswith("{") and token.endswith("}"):
+                    var_name = token[1:-1]
+                    val = values.get(var_name)
+
+                    if isinstance(val, bool):
+                        if val:
+                            # Fallback for standalone boolean placeholders without an explicit '--flag'
+                            cmd_args.append(f"--{var_name}")
+                    elif val is not None:
+                        cmd_args.append(str(val))
+
+                else:
+                    cmd_args.append(token)
+
+                i += 1
+
+            quoted_cmd = " ".join(shlex.quote(a) for a in cmd_args)
+            formatted_sequences.append(quoted_cmd)
+
+        full_command = " && ".join(formatted_sequences)
+        return ["sh", "-c", full_command] 
 
 class TestBlockCommand(BlockCommand):
     sys0: str = "echo"
@@ -226,7 +249,7 @@ class CompositeVideosCommand(BlockCommand):
     ]
     source_bucket: str
     destination: str
-    delete_originals: bool = True
+    delete_originals: bool = False
     tmp_source: str = "tmp/input_dataset"
 
 class HandRemovalCommand(BlockCommand):
@@ -310,10 +333,10 @@ class HandRemovalRequest(BaseModel):
     environment: List[dict] = Field(default_factory=list)
     command: HandRemovalCommand = Field(default_factory=HandRemovalCommand)
 
-class LeRobotConversionRequest(BaseModel):
-    name: Literal["lerobot_conversion"]
+class LeRobotAdapterRequest(BaseModel):
+    name: Literal["lerobot_adapter"]
     job_queue: str = "medium_queue"
-    job_definition: str = "LeRobotConversionCommand"
+    job_definition: str = "!TBD! Depends on command out_format"
     environment: List[dict] = Field(default_factory=list)
     command: LeRobotConversionCommand = Field(default_factory=LeRobotConversionCommand)
 
@@ -443,7 +466,9 @@ def _block_handler(block: BlockRequest) -> str:
     elif block.name == "sync_s3_bucket":
         job_id = _submit_batch_job(block)
         return _poll_until_done(job_id)
-    elif block.name == "lerobot_conversion":
+    elif block.name == "lerobot_adapter":
+        print(f"This block forks containers {block.command}.")
+        block.job_definition = "LeRobotV2ConversionCommand" if "v21" in block.command.out_format else "LeRobotV3ConversionCommand"     
         job_id = _submit_batch_job(block)
         return _poll_until_done(job_id)
     elif block.name == "sync_to_30":
@@ -470,7 +495,9 @@ def _submit_batch_job(block: BlockRequest) -> str:
     if not batch:
         time.sleep(1)
         return "0"
-
+    global dry_run
+    if dry_run:
+        return "0"
     response = batch.submit_job(
         jobName=f"{block.name}",
         jobQueue=f"{block.job_queue}",
@@ -521,6 +548,9 @@ def _poll_until_done(job_id: str, mock_time: float = 1.0) -> str:
         return "SUCCEEDED"
 
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1] == "dry-run":
+        dry_run = True
     workflow_thread = main_start_workflow()
    
     if workflow_thread: # If the workflow request is good, let it finish and kill the API.
