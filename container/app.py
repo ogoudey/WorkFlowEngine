@@ -367,8 +367,8 @@ class CompositeVideosRequest(BaseModel):
 
 class IsaacFinetuneRequest(BaseModel):
     name: Literal["finetune_groot"]
-    job_queue: str = "minimal_queue"
-    job_definition: str = "run_block_job"
+    job_queue: str = "heavy_queue"
+    job_definition: str = "FinetuneGrootJob"
     environment: List[dict] = Field(default_factory=list)
     command: IsaacFinetuneCommand = Field(default_factory=IsaacFinetuneCommand)
 
