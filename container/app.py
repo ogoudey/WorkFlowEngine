@@ -346,7 +346,7 @@ class HandRemovalRequest(BaseModel):
 
 class LeRobotAdapterRequest(BaseModel):
     name: Literal["lerobot_adapter"]
-    job_queue: str = "medium_queue"
+    job_queue: str = "small_queue"
     job_definition: str = "!TBD! Depends on command out_format"
     environment: List[dict] = Field(default_factory=list)
     command: LeRobotConversionCommand = Field(default_factory=LeRobotConversionCommand)
