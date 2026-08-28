@@ -373,7 +373,7 @@ class IsaacFinetuneRequest(BaseModel):
     command: IsaacFinetuneCommand = Field(default_factory=IsaacFinetuneCommand)
 
 BlockRequest = Annotated[
-    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotAdapterRequest, IsaacFinetuneRequest, SyncTo30Request, CompositeVideosRequest],
+    Union[TestLocalBlockRequest, TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotAdapterRequest, IsaacFinetuneRequest, SyncTo30Request, CompositeVideosRequest],
     Field(discriminator="name"),
 ]
 
@@ -560,8 +560,8 @@ def _poll_until_done(job_id: str, mock_time: float = 1.0) -> str:
 
 if __name__ == "__main__":
     import sys
-    if sys.argv[1] == "dry-run":
-        dry_run = True
+    if len(sys.argv) > 1:
+        dry_run = sys.argv[1] == "dry-run"
     workflow_thread = main_start_workflow()
    
     if workflow_thread: # If the workflow request is good, let it finish and kill the API.
