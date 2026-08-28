@@ -373,7 +373,7 @@ class IsaacFinetuneRequest(BaseModel):
     command: IsaacFinetuneCommand = Field(default_factory=IsaacFinetuneCommand)
 
 BlockRequest = Annotated[
-    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotConversionRequest, IsaacFinetuneRequest, SyncTo30Request, CompositeVideosRequest],
+    Union[TestBlockRequest, TestAWSRequest, TestLongBlockRequest, SyncS3BucketRequest, LeRobotAdapterRequest, IsaacFinetuneRequest, SyncTo30Request, CompositeVideosRequest],
     Field(discriminator="name"),
 ]
 
