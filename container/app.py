@@ -155,6 +155,7 @@ class TestLongBlockCommand(BlockCommand):
             "sync",
             "{tmp_destination}",
             "{destination}",
+            "--delete"
         ],
     ]
     source_bucket: str
@@ -184,6 +185,7 @@ class LeRobotConversionCommand(BlockCommand):
             "sync",
             "{tmp_destination}",
             "{destination}",
+            "--delete"
         ],
     ]
     source_bucket: str
@@ -217,6 +219,7 @@ class SyncTo30Command(BlockCommand):
             "sync",
             "{tmp_source}",
             "{destination}",
+            "--delete"
         ],
     ]
     source_bucket: str
@@ -245,6 +248,7 @@ class CompositeVideosCommand(BlockCommand):
             "sync",
             "{tmp_source}",
             "{destination}",
+            "--delete"
         ],
     ]
     source_bucket: str
@@ -264,28 +268,35 @@ class IsaacFinetuneCommand(BlockCommand):
             "aws",
             "s3",
             "sync",
-            "--source_bucket",
             "{source_bucket}",
-            "--destination",
-            "{destination}",
+            "{tmp_source}",
         ],
         [
             "python3",
             "finetune.py",
             "--source",
-            "{source}",
+            "{tmp_source}",
             "--output",
-            "{output}",
+            "{tmp_dest}",
             "--steps",
             "{steps}",
         ],
+        [
+            "aws",
+            "s3",
+            "sync",
+            "{tmp_dest}",
+            "{destination}",
+            "--delete"
+        ],
     ]
 
-    source_bucket: str = "my-bucket"
-    destination: str = "tmp/data"
-    output: str = "tmp/output"
+    source_bucket: str
+    destination: str
     steps: int = 20000
     dryrun: bool = False
+    tmp_source: str = "tmp/input_dataset"
+    tmp_dest: str = "tmp/output"
 
     
 
