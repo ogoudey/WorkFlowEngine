@@ -262,6 +262,44 @@ class HandRemovalCommand(BlockCommand):
     source_bucket: str
     destination_bucket: str
 
+class SmolVLAFinetuneCommand(BlockCommand):
+    commands: List[List[str]] = [
+            [
+                "aws",
+                "s3",
+                "sync",
+                "{source_bucket}",
+                "{tmp_source}",
+            ],
+            [
+                "python3",
+                "lerobot/scripts/train.py",
+                "--policy.path=lerobot/smolvla_base",
+                "--job_name=delphi_train_smolvla",
+                "--dataset.repo_id=$(realpath {tmp_source})",
+                "--policy_push_to_hub=false",
+                "--batch_size=64",
+                "--steps={steps}",
+                "--output_dir={tmp_output}"
+            ],
+            [
+                "aws",
+                "s3",
+                "sync",
+                "{tmp_output}",
+                "{destination}",
+                "--delete"
+            ],
+        ]
+        source_bucket: str
+        tmp_source: str = "tmp/source"
+        destination: str
+        steps: int = 20000
+        dryrun: bool = False
+        tmp_source: str = "tmp/input_dataset"
+        tmp_output: str = "tmp/output"
+
+
 class IsaacFinetuneCommand(BlockCommand):
     commands: List[List[str]] = [
         [
@@ -272,9 +310,10 @@ class IsaacFinetuneCommand(BlockCommand):
             "{tmp_source}",
         ],
         [
-            "python3",
-            "finetune.py",
-            "--source",
+            "uv",
+            "run",
+            "python",
+            "gr00t/experiment/launch_finetune.py",
             "{tmp_source}",
             "--output",
             "{tmp_dest}",
@@ -289,6 +328,7 @@ class IsaacFinetuneCommand(BlockCommand):
             "{destination}",
             "--delete"
         ],
+        
     ]
 
     source_bucket: str
